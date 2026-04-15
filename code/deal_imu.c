@@ -277,60 +277,87 @@ float accex,accey,accez;//误差积分
 float Kp=0.8,Ki=0.01;//理想状况下会有一个值趋于0
 //Kp比例增益 决定了加速度计和磁力计的收敛速度
 //Ki积分增益 决定了陀螺仪偏差的收敛速度
+
+float Desired_Angle_X_Rad, Desired_Angle_Y_Rad, Desired_Angle_Z_Rad;//三轴归零所需旋转弧度
+
 void MahonyAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float az) // 互补法求解四元数
 {
-    gx =gx * AtR;//转化成弧度，1°=0.0174弧度
-    gy =gy * AtR;
-    gz =gz * AtR;
+    gx = gx * AtR;                    // 转化成弧度，1°=0.0174弧度
+    gy = gy * AtR;
+    gz = gz * AtR;
 
-    //加速度归一化
-    float acc_g=invSqrt(ax*ax+ay*ay+az*az);
-    ax*=acc_g;
-    ay*=acc_g;
-    az*=acc_g;
+    // 加速度归一化
+    float acc_g = invSqrt(ax*ax + ay*ay + az*az);
+    ax *= acc_g;
+    ay *= acc_g;
+    az *= acc_g;
 
-    Vx=2*(q1*q3-q0*q2);
-    Vy=2*(q0*q1+q2*q3);
-    Vz=q0*q0-q1*q1-q2*q2+q3*q3;
+    // 根据当前四元数计算重力方向分量
+    Vx = 2 * (q1*q3 - q0*q2);
+    Vy = 2 * (q0*q1 + q2*q3);
+    Vz = q0*q0 - q1*q1 - q2*q2 + q3*q3;
 
-    ex=(ay*Vz-az*Vy);//向量外积在相减得到差分就是误差
-    ey=(az*Vx-ax*Vz);
-    ez=(ax*Vy-ay*Vx);//求姿态误差
+    // 向量外积得到姿态误差
+    ex = (ay*Vz - az*Vy);
+    ey = (az*Vx - ax*Vz);
+    ez = (ax*Vy - ay*Vx);
 
-    accex+=ex*Ki*dt_quaternions;
-    accey+=ey*Ki*dt_quaternions;
-    accez+=ez*Ki*dt_quaternions;//求误差积分
+    // 误差积分
+    accex += ex * Ki * dt_quaternions;
+    accey += ey * Ki * dt_quaternions;
+    accez += ez * Ki * dt_quaternions;
 
-    gx+=Kp*ex+accex;//将误差PI后补偿到陀螺仪，即补偿零点漂移
-    gy+=Kp*ey+accey;
-    gz+=Kp*ez+accez;//修正角速度//这里的gz由于没有观测者进行矫正会产生漂移，表现出来的就是积分自增或自减
+    // 将误差PI补偿到陀螺仪，消除零点漂移
+    gx += Kp*ex + accex;
+    gy += Kp*ey + accey;
+    gz += Kp*ez + accez;              // 这里的gz由于没有观测者进行矫正会产生漂移，表现出来的就是积分自增或自减
 
-    gx*=0.5f*dt_quaternions;
-    gy*=0.5f*dt_quaternions;
-    gz*=0.5f*dt_quaternions;
+    // 计算半个时间步长的角增量（用于四元数更新）
+    float half_dt_gx = 0.5f * dt_quaternions * gx;
+    float half_dt_gy = 0.5f * dt_quaternions * gy;
+    float half_dt_gz = 0.5f * dt_quaternions * gz;
 
-    //一阶龙格库塔法更新四元数
-    q0+=-1*q0*gx-q2*gy-q3*gz;
-    q1+=q0*gx+q2*gz-q3*gy;
-    q2+=q0*gy-q1*gz+q3*gx;
-    q3+=q0*gz+q1*gy-q2*gx;//解四元数方程
+    // 一阶龙格库塔法更新四元数（已修正符号错误）
+    q0 += -q1 * half_dt_gx - q2 * half_dt_gy - q3 * half_dt_gz;
+    q1 +=  q0 * half_dt_gx + q2 * half_dt_gz - q3 * half_dt_gy;
+    q2 +=  q0 * half_dt_gy - q1 * half_dt_gz + q3 * half_dt_gx;
+    q3 +=  q0 * half_dt_gz + q1 * half_dt_gy - q2 * half_dt_gx;
 
-    float q_g=invSqrt(q0*q0+q1*q1+q2*q2+q3*q3);
-    q0*=q_g;
-    q1*=q_g;
-    q2*=q_g;
-    q3*=q_g;//四元数归一化
+    // 四元数归一化
+    float q_g = invSqrt(q0*q0 + q1*q1 + q2*q2 + q3*q3);
+    q0 *= q_g;
+    q1 *= q_g;
+    q2 *= q_g;
+    q3 *= q_g;
 
-    g1=2.0f*(q1*q3-q0*q2);
-    g2=2.0f*(q0*q1+q2*q3);
-    g3=q0*q0-q1*q1-q2*q2+q3*q3;
-    g4=2.0f*(q1*q2+q0*q3);
-    g5=q0*q0+q1*q1-q2*q2-q3*q3;
+    // 计算旋转矩阵元素（用于提取欧拉角）
+    g1 = 2.0f * (q1*q3 - q0*q2);
+    g2 = 2.0f * (q0*q1 + q2*q3);
+    g3 = q0*q0 - q1*q1 - q2*q2 + q3*q3;
+    g4 = 2.0f * (q1*q2 + q0*q3);
+    g5 = q0*q0 + q1*q1 - q2*q2 - q3*q3;
 
-    Angle_Y_Final=asinf(g1) * RtA;
-    Angle_X_Final=atan2f(g2,g3) * RtA;
-    Angle_Z_Final=atan2f(g4,g5) * RtA;
+    // 输出欧拉角（角度制）
+    Angle_Y_Final = asinf(g1) * RtA;
+    Angle_X_Final = atan2f(g2, g3) * RtA;
+    Angle_Z_Final = atan2f(g4, g5) * RtA;
 
+    // ========== 输出三轴归零所需旋转弧度（无死锁） ==========
+    float qe1 = -q1, qe2 = -q2, qe3 = -q3;
+    float norm_xyz = sqrtf(qe1*qe1 + qe2*qe2 + qe3*qe3);
+    float angle_rad = 2.0f * atan2f(norm_xyz, q0);
+    
+    if (norm_xyz > 1e-9f) {
+        float factor = angle_rad / norm_xyz;
+        Desired_Angle_X_Rad = qe1 * factor;
+        Desired_Angle_Y_Rad = qe2 * factor;
+        Desired_Angle_Z_Rad = qe3 * factor;
+    } else {
+        Desired_Angle_X_Rad = 0.0f;
+        Desired_Angle_Y_Rad = 0.0f;
+        Desired_Angle_Z_Rad = 0.0f;
+    }
+    
 }
 
 

@@ -170,74 +170,97 @@ void weighting_sum_init(void)//加权权重初始化
 
 /*********************************************************************************************************/
 
-// #define MOVE_AVERAGE_SIZE   10      // 缓冲区大小，值越大平滑效果越好，滞后越明显
-// #define GAUSSIAN_SIGMA      2.0f    // 高斯分布标准差，可根据需要调整（越大权重分布越平坦）
+// #define MOVE_AVERAGE_SIZE   9      // 窗口大小
+// #define GAUSSIAN_SIGMA      2.0f    // 高斯分布标准差
 
+// // 中心模式枚举
+// typedef enum {
+//     CENTER_FIXED,       // 固定几何中心 (索引 4)
+//     CENTER_LATEST,      // 最新样本中心 (索引 9)
+//     CENTER_MEAN         // 窗口均值映射中心
+// } center_mode_t;
+
+// // 滤波器结构体
 // typedef struct {
-//     uint8 buffer_size;                      // buffer 大小
-//     float data_buffer[MOVE_AVERAGE_SIZE];   // 数据缓冲区
-//     float data_average;                     // 当前加权平均值
-//     float data_sum;                         // 当前加权和（此处即为加权平均值，权重已归一）
+//     uint8_t buffer_size;
+//     float   data_buffer[MOVE_AVERAGE_SIZE];
+//     float   data_average;
+//     float   sigma;              // 当前标准差
+//     center_mode_t mode;         // 当前中心模式
 // } move_filter_struct;
 
-// // 高斯权重数组（静态全局，只需初始化一次）
-// static float gaussian_weights[MOVE_AVERAGE_SIZE];
-
-// /* 初始化高斯权重（以缓冲区中心为均值） */
-// void gaussian_weights_init(void) {
-//     float mean = (MOVE_AVERAGE_SIZE - 1) / 2.0f;   // 样本中心索引
-//     float sigma = GAUSSIAN_SIGMA;
-//     float sum = 0.0f;
-
-//     // 计算原始高斯权重
+// /* 初始化滤波器 */
+// void move_filter_init(move_filter_struct *mf, float sigma, center_mode_t mode) {
+//     mf->buffer_size = MOVE_AVERAGE_SIZE;
+//     mf->sigma = sigma;
+//     mf->mode = mode;
+//     mf->data_average = 0.0f;
 //     for (int i = 0; i < MOVE_AVERAGE_SIZE; i++) {
-//         float x = (float)i - mean;
-//         gaussian_weights[i] = expf(- (x * x) / (2.0f * sigma * sigma));
-//         sum += gaussian_weights[i];
+//         mf->data_buffer[i] = 0.0f;
 //     }
+// }
 
-//     // 归一化，使权重之和为 1
-//     if (sum > 0.0f) {
-//         for (int i = 0; i < MOVE_AVERAGE_SIZE; i++) {
-//             gaussian_weights[i] /= sum;
+// /* 计算窗口内数据的均值 */
+// static float calc_mean(float *arr, int n) {
+//     float sum = 0.0f;
+//     for (int i = 0; i < n; i++) sum += arr[i];
+//     return sum / (float)n;
+// }
+
+// /* 滑动高斯滤波（动态中心） */
+// void move_filter_calc(move_filter_struct *mf, float new_data) {
+//     // 1. 更新数据缓冲区（FIFO）
+//     for (int i = 0; i < MOVE_AVERAGE_SIZE - 1; i++) {
+//         mf->data_buffer[i] = mf->data_buffer[i + 1];
+//     }
+//     mf->data_buffer[MOVE_AVERAGE_SIZE - 1] = new_data;
+
+//     // 2. 确定高斯中心索引
+//     float center;
+//     switch (mf->mode) {
+//         case CENTER_FIXED:
+//             center = (MOVE_AVERAGE_SIZE - 1) / 2.0f;   // 固定中心 4.5
+//             break;
+//         case CENTER_LATEST:
+//             center = MOVE_AVERAGE_SIZE - 1;            // 最新样本索引 9
+//             break;
+//         case CENTER_MEAN:
+//         default: {
+//             // 计算窗口均值，并线性映射到 [0, MOVE_AVERAGE_SIZE-1] 作为中心索引
+//             float min_val = mf->data_buffer[0];
+//             float max_val = mf->data_buffer[0];
+//             for (int i = 1; i < MOVE_AVERAGE_SIZE; i++) {
+//                 if (mf->data_buffer[i] < min_val) min_val = mf->data_buffer[i];
+//                 if (mf->data_buffer[i] > max_val) max_val = mf->data_buffer[i];
+//             }
+//             float mean_val = calc_mean(mf->data_buffer, MOVE_AVERAGE_SIZE);
+//             if (max_val - min_val > 1e-6f) {
+//                 // 映射：最小值 -> 0，最大值 -> MOVE_AVERAGE_SIZE-1
+//                 center = (mean_val - min_val) / (max_val - min_val) * (MOVE_AVERAGE_SIZE - 1);
+//             } else {
+//                 center = (MOVE_AVERAGE_SIZE - 1) / 2.0f; // 全等时退化为固定中心
+//             }
+//             break;
 //         }
 //     }
-// }
 
-// /* 滑动平均滤波（高斯加权） */
-// void move_filter_calc(move_filter_struct *move_filter, float new_data) {
-//     // 1. 数据窗口移动（丢弃最旧值，加入新值）
-//     for (int i = 0; i < MOVE_AVERAGE_SIZE - 1; i++) {
-//         move_filter->data_buffer[i] = move_filter->data_buffer[i + 1];
+//     // 3. 生成高斯权重并计算加权平均值
+//     float sigma = mf->sigma;
+//     float weights[MOVE_AVERAGE_SIZE];
+//     float weight_sum = 0.0f;
+//     for (int i = 0; i < MOVE_AVERAGE_SIZE; i++) {
+//         float diff = (float)i - center;
+//         weights[i] = expf(- (diff * diff) / (2.0f * sigma * sigma));
+//         weight_sum += weights[i];
 //     }
-//     move_filter->data_buffer[MOVE_AVERAGE_SIZE - 1] = new_data;
 
-//     // 2. 计算高斯加权和（由于权重已归一化，加权和即平均值）
 //     float weighted_sum = 0.0f;
-//     for (int i = 0; i < MOVE_AVERAGE_SIZE; i++) {
-//         weighted_sum += move_filter->data_buffer[i] * gaussian_weights[i];
+//     if (weight_sum > 0.0f) {
+//         for (int i = 0; i < MOVE_AVERAGE_SIZE; i++) {
+//             weighted_sum += mf->data_buffer[i] * (weights[i] / weight_sum);
+//         }
 //     }
-
-//     move_filter->data_sum = weighted_sum;
-//     move_filter->data_average = weighted_sum;
-// }
-
-// /* 滤波器初始化 */
-// void move_filter_init(move_filter_struct *move_filter) {
-//     move_filter->data_sum = 0.0f;
-//     move_filter->data_average = 0.0f;
-//     move_filter->buffer_size = MOVE_AVERAGE_SIZE;
-
-//     for (int i = 0; i < MOVE_AVERAGE_SIZE; i++) {
-//         move_filter->data_buffer[i] = 0.0f;
-//     }
-
-//     // 确保高斯权重已初始化（只需调用一次）
-//     static bool weights_initialized = false;
-//     if (!weights_initialized) {
-//         gaussian_weights_init();
-//         weights_initialized = true;
-//     }
+//     mf->data_average = weighted_sum;
 // }
 
 

@@ -337,10 +337,12 @@ void MahonyAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float
     g4 = 2.0f * (q1*q2 + q0*q3);
     g5 = q0*q0 + q1*q1 - q2*q2 - q3*q3;
 
-    // 输出欧拉角（角度制）
-    Angle_Y_Final = asinf(g1) * RtA;
-    Angle_X_Final = atan2f(g2, g3) * RtA;
-    Angle_Z_Final = atan2f(g4, g5) * RtA;
+    // ---------- 欧拉角输出（带保护） ----------
+     if (g1 > 1.0f)  g1 = 1.0f;
+     if (g1 < -1.0f) g1 = -1.0f;
+     Angle_Y_Final = asinf(g1) * RtA;
+     Angle_X_Final = atan2f(2.0f*(q0*q1 + q2*q3), q0*q0 - q1*q1 - q2*q2 + q3*q3) * RtA;
+     Angle_Z_Final = atan2f(2.0f*(q1*q2 + q0*q3), q0*q0 + q1*q1 - q2*q2 - q3*q3) * RtA;
 
     // ========== 三轴归零所需旋转矢量（机体系，无死锁） ==========
     float qe1 = -q1, qe2 = -q2, qe3 = -q3;          // 去掉负号可使输出符号与当前角度一致

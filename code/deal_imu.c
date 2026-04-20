@@ -342,17 +342,23 @@ void MahonyAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float
     Angle_X_Final = atan2f(g2, g3) * RtA;
     Angle_Z_Final = atan2f(g4, g5) * RtA;
 
-    // ========== 输出三轴归零所需旋转弧度（无死锁） ==========
-    float qe1 = -q1, qe2 = -q2, qe3 = -q3;
+    // ========== 三轴归零所需旋转矢量（机体系，无死锁） ==========
+    float qe1 = -q1, qe2 = -q2, qe3 = -q3;          // 去掉负号可使输出符号与当前角度一致
     float norm_xyz = sqrtf(qe1*qe1 + qe2*qe2 + qe3*qe3);
     float angle_rad = 2.0f * atan2f(norm_xyz, q0);
-    
-    if (norm_xyz > 1e-9f) {
+
+//    // 可选：限制最大输出角度为 π，避免 over-range
+//    if (angle_rad > 3.14159f) angle_rad = 3.14159f;
+
+    if (norm_xyz > 1e-9f)
+    {
         float factor = angle_rad / norm_xyz;
         Desired_Angle_X_Rad = qe1 * factor;
         Desired_Angle_Y_Rad = qe2 * factor;
         Desired_Angle_Z_Rad = qe3 * factor;
-    } else {
+    }
+    else
+    {
         Desired_Angle_X_Rad = 0.0f;
         Desired_Angle_Y_Rad = 0.0f;
         Desired_Angle_Z_Rad = 0.0f;
